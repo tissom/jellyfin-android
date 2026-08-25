@@ -12,6 +12,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.appcompat.widget.AppCompatImageView
 import androidx.core.content.getSystemService
 import androidx.core.view.isVisible
 import androidx.core.view.postDelayed
@@ -40,10 +41,15 @@ class PlayerGestureHelper(
     private val gestureIndicatorOverlayImage: ImageView by playerBinding::gestureOverlayImage
     private val gestureIndicatorOverlayProgress: ProgressBar by playerBinding::gestureOverlayProgress
     private val seekOverlayLayout: LinearLayout by playerBinding::seekOverlayLayout
+    private val seekTrickplayThumbnail: AppCompatImageView by playerBinding::seekTrickplayThumbnail
     private val seekOverlayImage: ImageView by playerBinding::seekOverlayImage
     private val seekOverlayText: TextView by playerBinding::seekOverlayText
     private val seekPositionText: TextView by playerBinding::seekPositionText
     private val seekOverlayProgress: ProgressBar by playerBinding::seekOverlayProgress
+    private val gestureTrickplayHelper = TrickplayHelper(
+        thumbnailContainer = seekTrickplayThumbnail,
+        thumbnailView = seekTrickplayThumbnail,
+    )
     private var isOnPressingSpeedUp = false
 
     init {
@@ -271,6 +277,7 @@ class PlayerGestureHelper(
                     // Update position text (current position / duration)
                     val targetPosition = (seekStartPosition + seekTimeAccumulator).coerceIn(0, mediaDuration)
                     seekPositionText.text = "${formatTime(targetPosition)} / ${formatTime(mediaDuration)}"
+                    gestureTrickplayHelper.onScrubMove(targetPosition)
 
                     // Update progress bar
                     if (mediaDuration > 0) {
@@ -295,9 +302,9 @@ class PlayerGestureHelper(
                     seekTimeAccumulator = 0L
                     seekStartPosition = 0L
                     mediaDuration = 0L
+                    gestureTrickplayHelper.onScrubStop()
                     seekOverlayLayout.isVisible = false
                 }
-
 
                 if (!appPreferences.exoPlayerAllowSwipeGestures) {
                     return false
@@ -308,6 +315,7 @@ class PlayerGestureHelper(
                 }
 
                 // Hide horizontal overlay
+                gestureTrickplayHelper.onScrubStop()
                 seekOverlayLayout.isVisible = false
                 seekOverlayLayout.removeCallbacks(hideSeekOverlayAction)
 
@@ -421,6 +429,7 @@ class PlayerGestureHelper(
                         )
                     }
                 }
+                gestureTrickplayHelper.onScrubStop()
                 currentGesture = GestureDirection.NONE
                 isHorizontalSeeking = false
                 seekTimeAccumulator = 0L
