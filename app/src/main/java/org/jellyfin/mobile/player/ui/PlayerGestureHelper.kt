@@ -12,6 +12,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.appcompat.widget.AppCompatImageView
 import androidx.core.content.getSystemService
 import androidx.core.view.isVisible
 import androidx.core.view.postDelayed
@@ -20,6 +21,7 @@ import androidx.media3.ui.PlayerView
 import org.jellyfin.mobile.R
 import org.jellyfin.mobile.app.AppPreferences
 import org.jellyfin.mobile.databinding.FragmentPlayerBinding
+import org.jellyfin.mobile.player.source.JellyfinMediaSource
 import org.jellyfin.mobile.utils.Constants
 import org.jellyfin.mobile.utils.brightness
 import org.jellyfin.mobile.utils.dip
@@ -40,11 +42,17 @@ class PlayerGestureHelper(
     private val gestureIndicatorOverlayImage: ImageView by playerBinding::gestureOverlayImage
     private val gestureIndicatorOverlayProgress: ProgressBar by playerBinding::gestureOverlayProgress
     private val seekOverlayLayout: LinearLayout by playerBinding::seekOverlayLayout
+    private val seekTrickplayThumbnail: AppCompatImageView by playerBinding::seekTrickplayThumbnail
     private val seekOverlayImage: ImageView by playerBinding::seekOverlayImage
     private val seekOverlayText: TextView by playerBinding::seekOverlayText
     private val seekPositionText: TextView by playerBinding::seekPositionText
     private val seekOverlayProgress: ProgressBar by playerBinding::seekOverlayProgress
+    private val gestureTrickplayHelper = TrickplayHelper(
+        thumbnailContainer = seekTrickplayThumbnail,
+        thumbnailView = seekTrickplayThumbnail,
+    )
     private var isOnPressingSpeedUp = false
+    private var ignoreSeekUntilUp = false
 
     init {
         if (appPreferences.exoPlayerRememberBrightness) {
@@ -190,7 +198,7 @@ class PlayerGestureHelper(
                 distanceX: Float,
                 distanceY: Float,
             ): Boolean {
-                if (firstEvent == null) return false
+                if (firstEvent == null || ignoreSeekUntilUp) return false
 
                 // Check whether swipe was started in excluded region (vertical)
                 val exclusionSizeVertical = playerView.resources.dip(Constants.SWIPE_GESTURE_EXCLUSION_SIZE_VERTICAL)
@@ -228,11 +236,11 @@ class PlayerGestureHelper(
 
                     // Initialize seek start position on first swipe
                     if (!isHorizontalSeeking) {
-                        val player = playerView.player
-                        if (player != null) {
-                            seekStartPosition = player.currentPosition
-                            mediaDuration = player.duration.coerceAtLeast(0)
-                        }
+                        val player = playerView.player ?: return false
+                        if (!player.isCurrentMediaItemSeekable || player.duration <= 0) return false
+                        seekOverlayLayout.removeCallbacks(hideSeekOverlayAction)
+                        seekStartPosition = player.currentPosition
+                        mediaDuration = player.duration
                     }
 
                     isHorizontalSeeking = true
@@ -271,6 +279,7 @@ class PlayerGestureHelper(
                     // Update position text (current position / duration)
                     val targetPosition = (seekStartPosition + seekTimeAccumulator).coerceIn(0, mediaDuration)
                     seekPositionText.text = "${formatTime(targetPosition)} / ${formatTime(mediaDuration)}"
+                    gestureTrickplayHelper.onScrubMove(targetPosition)
 
                     // Update progress bar
                     if (mediaDuration > 0) {
@@ -295,9 +304,9 @@ class PlayerGestureHelper(
                     seekTimeAccumulator = 0L
                     seekStartPosition = 0L
                     mediaDuration = 0L
+                    gestureTrickplayHelper.onScrubStop()
                     seekOverlayLayout.isVisible = false
                 }
-
 
                 if (!appPreferences.exoPlayerAllowSwipeGestures) {
                     return false
@@ -308,6 +317,7 @@ class PlayerGestureHelper(
                 }
 
                 // Hide horizontal overlay
+                gestureTrickplayHelper.onScrubStop()
                 seekOverlayLayout.isVisible = false
                 seekOverlayLayout.removeCallbacks(hideSeekOverlayAction)
 
@@ -394,6 +404,11 @@ class PlayerGestureHelper(
     init {
         @Suppress("ClickableViewAccessibility")
         playerView.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) ignoreSeekUntilUp = false
+            if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN || !playerView.useController) {
+                cancelSeek()
+                ignoreSeekUntilUp = true
+            }
             if (playerView.useController) {
                 when (event.pointerCount) {
                     1 -> gestureDetector.onTouchEvent(event)
@@ -412,7 +427,7 @@ class PlayerGestureHelper(
 
                 // Handle horizontal seek gesture completion
                 if (event.action == MotionEvent.ACTION_UP && currentGesture == GestureDirection.HORIZONTAL && isHorizontalSeeking && seekTimeAccumulator != 0L) {
-                    fragment.onSeekByOffset(seekTimeAccumulator)
+                    playerView.player?.seekTo((seekStartPosition + seekTimeAccumulator).coerceIn(0L, mediaDuration))
                     seekOverlayLayout.apply {
                         removeCallbacks(hideSeekOverlayAction)
                         postDelayed(
@@ -420,7 +435,10 @@ class PlayerGestureHelper(
                             Constants.DEFAULT_CENTER_OVERLAY_TIMEOUT_MS.toLong(),
                         )
                     }
+                } else {
+                    seekOverlayLayout.isVisible = false
                 }
+                gestureTrickplayHelper.onScrubStop()
                 currentGesture = GestureDirection.NONE
                 isHorizontalSeeking = false
                 seekTimeAccumulator = 0L
@@ -443,7 +461,33 @@ class PlayerGestureHelper(
         }
     }
 
+    fun onMediaSourceChanged(source: JellyfinMediaSource?) {
+        cancelSeek()
+        ignoreSeekUntilUp = true
+        gestureTrickplayHelper.onMediaSourceChanged(source)
+    }
+
+    private fun cancelSeek() {
+        gestureTrickplayHelper.onScrubStop()
+        seekOverlayLayout.removeCallbacks(hideSeekOverlayAction)
+        seekOverlayLayout.isVisible = false
+        currentGesture = GestureDirection.NONE
+        isHorizontalSeeking = false
+        seekTimeAccumulator = 0L
+        seekStartPosition = 0L
+        mediaDuration = 0L
+    }
+
+    fun release() {
+        onMediaSourceChanged(null)
+        playerView.setOnTouchListener(null)
+        playerView.removeCallbacks(hidePlayerViewControllerAction)
+        gestureIndicatorOverlayLayout.removeCallbacks(hideGestureIndicatorOverlayAction)
+    }
+
     fun handleConfiguration(newConfig: Configuration) {
+        cancelSeek()
+        ignoreSeekUntilUp = true
         updateZoomMode(fragment.isLandscape(newConfig) && isZoomEnabled)
     }
 

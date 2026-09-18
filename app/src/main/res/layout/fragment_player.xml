@@ -50,16 +50,27 @@
 
         <LinearLayout
             android:id="@+id/seek_overlay_layout"
-            android:layout_width="@dimen/exo_gesture_overlay_width"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:background="@drawable/playback_info_background"
             android:clickable="false"
             android:gravity="center_horizontal"
+            android:minWidth="@dimen/exo_gesture_overlay_width"
             android:orientation="vertical"
             android:padding="16dp"
             android:visibility="gone"
             tools:visibility="visible">
+
+            <androidx.appcompat.widget.AppCompatImageView
+                android:id="@+id/seek_trickplay_thumbnail"
+                android:layout_width="wrap_content"
+                android:layout_height="120dp"
+                android:layout_marginBottom="8dp"
+                android:scaleType="fitXY"
+                android:visibility="gone"
+                tools:layout_width="213dp"
+                tools:visibility="visible" />
 
             <androidx.appcompat.widget.AppCompatImageView
                 android:id="@+id/seek_overlay_image"

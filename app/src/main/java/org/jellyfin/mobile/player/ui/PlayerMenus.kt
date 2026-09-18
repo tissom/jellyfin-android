@@ -74,6 +74,8 @@ class PlayerMenus(
     private var subtitleCount = 0
     private var subtitlesEnabled = false
 
+    fun release() = trickplayHelper.onMediaSourceChanged(null)
+
     private val trickplayHelper = TrickplayHelper(
         trickplayContainer,
         trickplayThumbnail,
