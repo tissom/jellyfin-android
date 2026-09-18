@@ -69,9 +69,9 @@ class TrickplayHelper(
         val resolvedTrickPlayInfo = item?.trickplay?.get(resolvedSourceId)?.values?.firstOrNull()
         if (item == null || resolvedMediaSourceId == null || resolvedTrickPlayInfo == null) return
 
-        if (resolvedTrickPlayInfo.interval <= 0 || resolvedTrickPlayInfo.width <= 0 || resolvedTrickPlayInfo.height <= 0 ||
-            resolvedTrickPlayInfo.tileWidth <= 0 || resolvedTrickPlayInfo.tileHeight <= 0 || resolvedTrickPlayInfo.thumbnailCount <= 0
-        ) return
+        with(resolvedTrickPlayInfo) {
+            if (interval <= 0 || listOf(width, height, tileWidth, tileHeight, thumbnailCount).any { it <= 0 }) return
+        }
 
         sourceState = TrickplaySourceState(
             trickPlayInfo = resolvedTrickPlayInfo,
@@ -107,14 +107,7 @@ class TrickplayHelper(
         val offsetX = tileOffsetX * resolvedTrickPlayInfo.width
         val offsetY = tileOffsetY * resolvedTrickPlayInfo.height
 
-        // Seek-bar previews follow the scrubber. Gesture previews omit seekBarContainer and stay centered.
-        seekBarContainer?.let { container ->
-            val fraction = resolvedPosition.toFloat() / sourceState.durationMs.toFloat()
-            val scrubberX = container.x + fraction * container.width
-            val clampMin = container.x
-            val clampMax = (container.x + container.width - thumbnailDisplayWidth).coerceAtLeast(clampMin)
-            thumbnailContainer.x = (scrubberX - thumbnailDisplayWidth / 2f).coerceIn(clampMin, clampMax)
-        }
+        updatePreviewPosition(resolvedPosition, sourceState.durationMs)
 
         // Chapter name and timestamp are only present in the regular seek-bar preview.
         chapterNameView?.let { chapterView ->
@@ -162,6 +155,16 @@ class TrickplayHelper(
             runnable,
             maxOf(SystemClock.uptimeMillis(), nextDispatchAt),
         )
+    }
+
+    private fun updatePreviewPosition(position: Long, duration: Long) {
+        // Gesture previews omit seekBarContainer and stay centered.
+        seekBarContainer?.let { container ->
+            val scrubberX = container.x + position.toFloat() / duration * container.width
+            val clampMin = container.x
+            val clampMax = (container.x + container.width - thumbnailDisplayWidth).coerceAtLeast(clampMin)
+            thumbnailContainer.x = (scrubberX - thumbnailDisplayWidth / 2f).coerceIn(clampMin, clampMax)
+        }
     }
 
     private fun updateThumbnailSize(trickPlayInfo: TrickplayInfoDto) {
