@@ -126,7 +126,6 @@ class PlayerFragment : Fragment(), BackPressInterceptor {
 
             // Update title and player menus
             toolbar.title = mediaSource.getName(requireContext())
-            playerMenus?.onQueueItemChanged(mediaSource, viewModel.queueManager.hasNext())
         }
 
         // Handle fragment arguments, extract playback options and start playback
@@ -211,6 +210,10 @@ class PlayerFragment : Fragment(), BackPressInterceptor {
 
         playerLockScreenHelper = PlayerLockScreenHelper(this, playerBinding, orientationListener)
         playerGestureHelper = PlayerGestureHelper(this, playerBinding, playerLockScreenHelper)
+        viewModel.queueManager.currentMediaSource.observe(viewLifecycleOwner) { source ->
+            playerGestureHelper.onMediaSourceChanged(source)
+            playerMenus?.onQueueItemChanged(source, viewModel.queueManager.hasNext())
+        }
 
         // Handle fullscreen switcher
         fullscreenSwitcher.setOnClickListener {
@@ -422,6 +425,8 @@ class PlayerFragment : Fragment(), BackPressInterceptor {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        playerGestureHelper.release()
+        playerMenus?.release()
         // Detach player from PlayerView
         playerView.player = null
 

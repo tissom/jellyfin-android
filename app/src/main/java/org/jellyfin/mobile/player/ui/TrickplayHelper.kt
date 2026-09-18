@@ -55,10 +55,13 @@ class TrickplayHelper(
     private var lastDispatchedTile = -1
     private var isScrubbing = false
     private var nextDispatchAt = 0L
+    private var sourceState: TrickplaySourceState? = null
+    private var requestGeneration = 0L
+    private var requestedTile = -1
 
     fun onMediaSourceChanged(source: JellyfinMediaSource?) {
         onScrubStop()
-        sharedSourceState = null
+        sourceState = null
 
         val item = source?.item
         val resolvedSourceId = source?.id
@@ -66,7 +69,11 @@ class TrickplayHelper(
         val resolvedTrickPlayInfo = item?.trickplay?.get(resolvedSourceId)?.values?.firstOrNull()
         if (item == null || resolvedMediaSourceId == null || resolvedTrickPlayInfo == null) return
 
-        sharedSourceState = TrickplaySourceState(
+        if (resolvedTrickPlayInfo.interval <= 0 || resolvedTrickPlayInfo.width <= 0 || resolvedTrickPlayInfo.height <= 0 ||
+            resolvedTrickPlayInfo.tileWidth <= 0 || resolvedTrickPlayInfo.tileHeight <= 0 || resolvedTrickPlayInfo.thumbnailCount <= 0
+        ) return
+
+        sourceState = TrickplaySourceState(
             trickPlayInfo = resolvedTrickPlayInfo,
             itemId = item.id,
             mediaSourceId = resolvedMediaSourceId,
@@ -80,7 +87,7 @@ class TrickplayHelper(
         if (!isScrubbing) thumbnailContainer.visibility = View.GONE
         isScrubbing = true
 
-        val sourceState = sharedSourceState ?: return
+        val sourceState = sourceState ?: return
         if (sourceState.durationMs <= 0) return
 
         val resolvedTrickPlayInfo = sourceState.trickPlayInfo
@@ -90,7 +97,8 @@ class TrickplayHelper(
         updateThumbnailSize(resolvedTrickPlayInfo)
 
         // Calculate trickplay tile position and offset based on scrubber position
-        val currentTile = resolvedPosition.floorDiv(resolvedTrickPlayInfo.interval).toInt()
+        val currentTile = resolvedPosition.floorDiv(resolvedTrickPlayInfo.interval)
+            .coerceIn(0L, (resolvedTrickPlayInfo.thumbnailCount - 1).toLong()).toInt()
         val tileSize = resolvedTrickPlayInfo.tileWidth * resolvedTrickPlayInfo.tileHeight
         val tileOffset = currentTile % tileSize
         val tileIndex = currentTile / tileSize
@@ -119,10 +127,16 @@ class TrickplayHelper(
         timeView?.text = formatPositionAsElapsedTime(resolvedPosition)
 
         // Same tile already pending or already displayed - position updated above, nothing else to do
-        if (currentTile == pendingTile || currentTile == lastDispatchedTile) return
+        requestedTile = currentTile
+        if (currentTile == pendingTile) return
 
-        // Cancel previous pending request and schedule a new one for the latest tile
+        // Returning to the displayed/in-flight tile must also cancel a queued different tile.
         pendingRequest?.let { handler.removeCallbacks(it) }
+        pendingRequest = null
+        pendingTile = -1
+        if (currentTile == lastDispatchedTile) return
+
+        // Schedule a request for the latest tile.
         pendingTile = currentTile
 
         val url = api.trickplayApi.getTrickplayTileImageUrl(
@@ -137,10 +151,8 @@ class TrickplayHelper(
                 url = url,
                 offsetX = offsetX,
                 offsetY = offsetY,
-                tileWidth = resolvedTrickPlayInfo.width,
-                tileHeight = resolvedTrickPlayInfo.height,
+                info = resolvedTrickPlayInfo,
                 tile = currentTile,
-                mediaSourceId = resolvedMediaSourceId,
             )
         }
         pendingRequest = runnable
@@ -166,16 +178,15 @@ class TrickplayHelper(
         url: String,
         offsetX: Int,
         offsetY: Int,
-        tileWidth: Int,
-        tileHeight: Int,
+        info: TrickplayInfoDto,
         tile: Int,
-        mediaSourceId: UUID,
     ) {
         lastDispatchedTile = tile
         pendingTile = -1
         pendingRequest = null
         nextDispatchAt = SystemClock.uptimeMillis() + Constants.TRICKPLAY_TILE_REFRESH_WINDOW_MS
 
+        val generation = ++requestGeneration
         currentRequest?.dispose()
         currentRequest = imageLoader.enqueue(
             ImageRequest.Builder(context)
@@ -196,12 +207,20 @@ class TrickplayHelper(
                         )
                         .build(),
                 )
-                .transformations(SubsetTransformation(offsetX, offsetY, tileWidth, tileHeight))
+                .transformations(SubsetTransformation(offsetX, offsetY, info.width, info.height))
                 .target(
                     onSuccess = { image ->
-                        if (isScrubbing && sharedSourceState?.mediaSourceId == mediaSourceId) {
+                        if (isScrubbing && requestGeneration == generation && requestedTile == tile) {
                             thumbnailView.setImageBitmap(image.toBitmap())
                             thumbnailContainer.visibility = View.VISIBLE
+                        } else if (requestGeneration == generation) {
+                            lastDispatchedTile = -1
+                        }
+                    },
+                    onError = {
+                        if (requestGeneration == generation) {
+                            lastDispatchedTile = -1
+                            thumbnailContainer.visibility = View.GONE
                         }
                     },
                 )
@@ -209,8 +228,10 @@ class TrickplayHelper(
         )
     }
 
-    fun onScrubStop(hideThumbnail: Boolean = true) {
+    fun onScrubStop() {
         isScrubbing = false
+        requestGeneration++
+        requestedTile = -1
         pendingRequest?.let { handler.removeCallbacks(it) }
         pendingRequest = null
         pendingTile = -1
@@ -218,7 +239,8 @@ class TrickplayHelper(
         nextDispatchAt = 0L
         currentRequest?.dispose()
         currentRequest = null
-        if (hideThumbnail) thumbnailContainer.visibility = View.GONE
+        thumbnailContainer.visibility = View.GONE
+        thumbnailView.setImageDrawable(null)
     }
 
     private fun formatPositionAsElapsedTime(positionMs: Long): String {
@@ -234,8 +256,4 @@ class TrickplayHelper(
         val durationMs: Long,
         val chapters: List<ChapterInfo>?,
     )
-
-    companion object {
-        private var sharedSourceState: TrickplaySourceState? = null
-    }
 }
